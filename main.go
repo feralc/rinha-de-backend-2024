@@ -26,6 +26,10 @@ func main() {
 
 	db := mongoClient.Database(app.DatabaseName)
 
+	if err := db.Drop(ctx); err != nil {
+		panic(err)
+	}
+
 	db.Collection(app.TransactionsCollectionName).Indexes().CreateMany(ctx, []mongo.IndexModel{
 		{
 			Keys:    bson.M{"client_id": 1},

@@ -68,10 +68,12 @@ func (s ClientState) GetTransactionHistory() TransactionHistory {
 	}
 
 	return TransactionHistory{
-		CreditLimit:      s.totalCreditLimit,
-		Total:            s.balance,
+		Balance: TransactionHistoryBalance{
+			CreditLimit: s.totalCreditLimit,
+			Total:       s.balance,
+			Date:        time.Now(),
+		},
 		LastTransactions: transactionsResponse,
-		Date:             time.Now(),
 	}
 }
 
