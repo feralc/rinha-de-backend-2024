@@ -2,7 +2,7 @@ version: "3.8"
 
 services:
   web01:
-    image: feralc/rinha-de-backend-2024:latest
+    image: felipealcantara/rinha-de-backend-2024:latest
     environment:
       GIN_MODE: release
       APP_IN_MEMORY: "false"
@@ -16,7 +16,7 @@ services:
           cpus: "0.27"
           memory: "60MB"
   web02:
-    image: feralc/rinha-de-backend-2024:latest
+    image: felipealcantara/rinha-de-backend-2024:latest
     environment:
       GIN_MODE: release
       APP_IN_MEMORY: "false"
@@ -30,19 +30,17 @@ services:
           cpus: "0.27"
           memory: "60MB"
 
-  haproxy:
-    image: haproxy:2.9.4
-    volumes:
-      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+  lb:
+    image: felipealcantara/rinha-de-backend-2024-lb:latest
     ports:
-      - "9090:9090"
+    - "9999:9999"
     depends_on:
     - web01
     - web02
     deploy:
       resources:
         limits:
-          cpus: "0.39"
+          cpus: "0.27"
           memory: "60MB"
 
   db:

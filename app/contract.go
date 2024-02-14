@@ -3,6 +3,8 @@ package app
 import (
 	"context"
 	"time"
+
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type TransactionType string
@@ -24,21 +26,36 @@ type SuccessTransactionResponse struct {
 }
 
 type TransactionHistory struct {
-	CreditLimit      int           `json:"limite"`
-	Total            int           `json:"total"`
-	LastTransactions []Transaction `json:"ultimas_transacoes"`
-	Date             time.Time     `json:"data_extrato"`
+	CreditLimit      int                   `json:"limite"`
+	Total            int                   `json:"total"`
+	LastTransactions []TransactionResponse `json:"ultimas_transacoes"`
+	Date             time.Time             `json:"data_extrato"`
 }
 
 type Transaction struct {
-	ClientID    int
+	ClientID    int             `json:"client_id,omitempty" bson:"client_id,omitempty"`
+	Amount      int             `json:"valor" bson:"amount"`
+	Type        TransactionType `json:"tipo" bson:"type"`
+	Description string          `json:"descricao" bson:"description"`
+	Timestamp   time.Time       `json:"realizada_em" bson:"created_at"`
+	Revision    int             `json:"revision,omitempty" bson:"revision"`
+}
+
+type TransactionResponse struct {
 	Amount      int             `json:"valor"`
 	Type        TransactionType `json:"tipo"`
 	Description string          `json:"descricao"`
 	Timestamp   time.Time       `json:"realizada_em"`
 }
 
+type Snapshot struct {
+	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	Revision  int                `bson:"revision"`
+	Balance   int                `bson:"balance"`
+	CreatedAt time.Time          `bson:"created_at"`
+}
+
 type TransactionStore interface {
-	Add(ctx context.Context, transaction Transaction) error
-	GetTransactionHistory(ctx context.Context, clientID int) ([]Transaction, error)
+	Add(ctx context.Context, currentBalance int, transaction Transaction) error
+	GetTransactionHistory(ctx context.Context, clientID int) (lastSnapshot Snapshot, transactions []Transaction, err error)
 }

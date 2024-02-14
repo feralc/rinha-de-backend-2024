@@ -6,26 +6,29 @@ import (
 )
 
 type inMemoryTransactionStore struct {
-	transactions map[int][]Transaction
-	mu           sync.Mutex
+	transactions   map[int][]Transaction
+	mu             sync.Mutex
+	currentBalance int
 }
 
 func NewInMemoryTransactionStore() TransactionStore {
 	return &inMemoryTransactionStore{
-		transactions: make(map[int][]Transaction),
+		transactions:   make(map[int][]Transaction),
+		currentBalance: 0,
 	}
 }
 
-func (s *inMemoryTransactionStore) Add(ctx context.Context, transaction Transaction) error {
+func (s *inMemoryTransactionStore) Add(ctx context.Context, currentBalance int, transaction Transaction) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	s.transactions[transaction.ClientID] = append(s.transactions[transaction.ClientID], transaction)
+	s.currentBalance = currentBalance
 
 	return nil
 }
 
-func (s *inMemoryTransactionStore) GetTransactionHistory(ctx context.Context, clientID int) ([]Transaction, error) {
+func (s *inMemoryTransactionStore) GetTransactionHistory(ctx context.Context, clientID int) (Snapshot, []Transaction, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -35,5 +38,5 @@ func (s *inMemoryTransactionStore) GetTransactionHistory(ctx context.Context, cl
 		transactions = s.transactions[clientID]
 	}
 
-	return transactions, nil
+	return Snapshot{}, transactions, nil
 }

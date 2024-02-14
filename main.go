@@ -19,7 +19,6 @@ func main() {
 
 	clientManager := app.NewClientManager(store)
 
-	// @TODO remover gin para deixar mais performatico
 	r := gin.Default()
 
 	r.POST("/clientes/:id/transacoes", func(c *gin.Context) {
