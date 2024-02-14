@@ -160,5 +160,8 @@ func (a *ClientActor) rebuildState(transactions []Transaction) {
 		} else if t.Type == DebitTransaction {
 			a.state.balance -= t.Amount
 		}
+
+		// @TODO create a method to cycle and keep only last 10 transactions
+		a.state.lastTransactions = append(a.state.lastTransactions, t)
 	}
 }
