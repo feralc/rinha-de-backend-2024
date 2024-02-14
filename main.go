@@ -1,7 +1,7 @@
 package main
 
 import (
-	"database/sql"
+	"context"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	_ "github.com/mattn/go-sqlite3"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/mongo"
+	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
 // TransactionRequest represents a transaction request.
@@ -21,8 +23,17 @@ type TransactionRequest struct {
 
 // TransactionResponse represents a transaction response.
 type TransactionResponse struct {
-	Limite int `json:"limite"`
-	Saldo  int `json:"saldo"`
+	Limite           int           `json:"limite"`
+	Saldo            int           `json:"saldo"`
+	LastTransactions []Transaction `json:"ultimas_transacoes"`
+}
+
+// Transaction represents a transaction record.
+type Transaction struct {
+	Amount      int       `json:"valor"`
+	Type        string    `json:"tipo"`
+	Description string    `json:"descricao"`
+	Timestamp   time.Time `json:"realizada_em"`
 }
 
 // ClientActor represents an actor responsible for processing transactions for a specific client.
@@ -32,18 +43,18 @@ type ClientActor struct {
 	limit     int
 	inbox     chan *TransactionRequest
 	responses chan *TransactionResponse
-	db        *sql.DB
+	coll      *mongo.Collection
 }
 
 // NewClientActor creates a new actor for a specific client.
-func NewClientActor(clientID, limit int, responses chan *TransactionResponse, db *sql.DB) *ClientActor {
+func NewClientActor(clientID, limit int, responses chan *TransactionResponse, coll *mongo.Collection) *ClientActor {
 	actor := &ClientActor{
 		clientID:  clientID,
 		balance:   0,
 		limit:     limit,
 		inbox:     make(chan *TransactionRequest),
 		responses: responses,
-		db:        db,
+		coll:      coll,
 	}
 
 	go actor.start()
@@ -80,7 +91,8 @@ func (a *ClientActor) processTransaction(req *TransactionRequest) *TransactionRe
 		fmt.Println("Invalid transaction type")
 	}
 
-	err := InsertTransaction(a.db, a.clientID, req.Amount, req.Type, req.Descricao)
+	// Insert transaction into MongoDB
+	err := InsertTransaction(a.coll, a.clientID, req.Amount, req.Type, req.Descricao)
 	if err != nil {
 		panic(err)
 	}
@@ -106,51 +118,40 @@ type ClientManager struct {
 }
 
 // NewClientManager creates a new client manager.
-func NewClientManager() *ClientManager {
+func NewClientManager(responses chan *TransactionResponse) *ClientManager {
 	return &ClientManager{
 		clients:   make(map[int]*ClientActor),
-		responses: make(chan *TransactionResponse),
+		responses: responses,
 	}
 }
 
 // GetOrCreateClientActor returns the actor for the specified client ID, creating a new one if it doesn't exist.
-func (cm *ClientManager) GetOrCreateClientActor(clientID, limit int, db *sql.DB) *ClientActor {
+func (cm *ClientManager) GetOrCreateClientActor(clientID, limit int, coll *mongo.Collection) *ClientActor {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 
 	actor, ok := cm.clients[clientID]
 	if !ok {
-		actor = NewClientActor(clientID, limit, cm.responses, db)
+		actor = NewClientActor(clientID, limit, cm.responses, coll)
 		cm.clients[clientID] = actor
 	}
 	return actor
 }
 
 func main() {
-
-	// Open SQLite database
-	db, err := sql.Open("sqlite3", "transactions.db")
+	// MongoDB connection URI
+	clientOptions := options.Client().ApplyURI("mongodb://db:27017")
+	client, err := mongo.Connect(context.Background(), clientOptions)
 	if err != nil {
 		panic(err)
 	}
-	defer db.Close()
+	defer client.Disconnect(context.Background())
 
-	// Create transactions table
-	_, err = db.Exec(`
-		 CREATE TABLE IF NOT EXISTS transactions (
-			 id INTEGER PRIMARY KEY AUTOINCREMENT,
-			 client_id INTEGER,
-			 amount INTEGER,
-			 type TEXT,
-			 description TEXT,
-			 created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-		 )
-	 `)
-	if err != nil {
-		panic(err)
-	}
+	// Select the database and collection
+	db := client.Database("mydatabase")
+	transactionsColl := db.Collection("transactions")
 
-	clientManager := NewClientManager()
+	clientManager := NewClientManager(make(chan *TransactionResponse))
 
 	// Create a Gin router
 	r := gin.Default()
@@ -173,13 +174,14 @@ func main() {
 		}
 
 		// Send transaction request to the client's actor
-		actor := clientManager.GetOrCreateClientActor(clientID, 100000, db)
+		actor := clientManager.GetOrCreateClientActor(clientID, 100000, transactionsColl)
 		response := actor.Send(&req)
 
 		// Send response
 		c.JSON(http.StatusOK, response)
 	})
 
+	// Define route handler for transaction history requests
 	r.GET("/clientes/:id/extrato", func(c *gin.Context) {
 		// Parse client ID from URL
 		clientIDStr := c.Param("id")
@@ -189,8 +191,8 @@ func main() {
 			return
 		}
 
-		// Fetch transaction history from database
-		transactions, err := GetTransactionHistory(db, clientID)
+		// Fetch transaction history from MongoDB
+		transactions, err := GetTransactionHistory(transactionsColl, clientID)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transaction history"})
 			return
@@ -200,13 +202,10 @@ func main() {
 		totalBalance := calculateTotalBalance(transactions)
 
 		// Prepare response
-		response := gin.H{
-			"saldo": gin.H{
-				"total":        totalBalance,
-				"data_extrato": time.Now().Format(time.RFC3339),
-				"limite":       100000, // Assuming this is the client's limit
-			},
-			"ultimas_transacoes": transactions,
+		response := TransactionResponse{
+			Limite:           100000, // Assuming this is the client's limit
+			Saldo:            totalBalance,
+			LastTransactions: transactions,
 		}
 
 		// Send response
@@ -219,43 +218,40 @@ func main() {
 	}
 }
 
-// Transaction represents a transaction record.
-type Transaction struct {
-	Amount      int    `json:"valor"`
-	Type        string `json:"tipo"`
-	Description string `json:"descricao"`
-	Timestamp   string `json:"realizada_em"`
-}
-
-// InsertTransaction inserts a transaction record into the database.
-func InsertTransaction(db *sql.DB, clientID, amount int, transactionType, description string) error {
-	_, err := db.Exec(`
-        INSERT INTO transactions (client_id, amount, type, description)
-        VALUES (?, ?, ?, ?)
-    `, clientID, amount, transactionType, description)
+// InsertTransaction inserts a transaction record into the MongoDB collection.
+func InsertTransaction(coll *mongo.Collection, clientID, amount int, transactionType, description string) error {
+	_, err := coll.InsertOne(context.Background(), bson.M{
+		"client_id":   clientID,
+		"amount":      amount,
+		"type":        transactionType,
+		"description": description,
+		"created_at":  time.Now(),
+	})
 	return err
 }
 
-// GetTransactionHistory fetches the transaction history for a specific client from the database.
-func GetTransactionHistory(db *sql.DB, clientID int) ([]Transaction, error) {
-	rows, err := db.Query(`
-        SELECT amount, type, description, created_at
-        FROM transactions
-        WHERE client_id = ?
-    `, clientID)
+// GetTransactionHistory fetches the transaction history for a specific client from the MongoDB collection.
+func GetTransactionHistory(coll *mongo.Collection, clientID int) ([]Transaction, error) {
+	findOptions := options.Find()
+	findOptions.SetSort(bson.D{{"created_at", -1}})
+	filter := bson.D{{"client_id", clientID}}
+	cur, err := coll.Find(context.Background(), filter, findOptions)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer cur.Close(context.Background())
 
 	var transactions []Transaction
-	for rows.Next() {
+	for cur.Next(context.Background()) {
 		var t Transaction
-		err := rows.Scan(&t.Amount, &t.Type, &t.Description, &t.Timestamp)
+		err := cur.Decode(&t)
 		if err != nil {
 			return nil, err
 		}
 		transactions = append(transactions, t)
+	}
+	if err := cur.Err(); err != nil {
+		return nil, err
 	}
 	return transactions, nil
 }
