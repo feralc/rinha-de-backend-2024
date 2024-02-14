@@ -5,17 +5,15 @@ import (
 )
 
 type ClientManager struct {
-	clients   map[int]*ClientActor
-	mutex     sync.Mutex
-	responses chan *TransactionResponse
-	store     TransactionStore
+	clients map[int]*ClientActor
+	mutex   sync.Mutex
+	store   TransactionStore
 }
 
 func NewClientManager(store TransactionStore) *ClientManager {
 	return &ClientManager{
-		clients:   make(map[int]*ClientActor),
-		responses: make(chan *TransactionResponse),
-		store:     store,
+		clients: make(map[int]*ClientActor),
+		store:   store,
 	}
 }
 
@@ -25,7 +23,7 @@ func (cm *ClientManager) Spawn(clientID, limit int) *ClientActor {
 
 	actor, ok := cm.clients[clientID]
 	if !ok {
-		actor = NewClientActor(clientID, limit, cm.responses)
+		actor = NewClientActor(clientID, limit)
 		cm.clients[clientID] = actor
 		defer actor.Send(&ActorMessage{Type: RefreshMessage})
 	}

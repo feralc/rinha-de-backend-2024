@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"time"
 )
@@ -18,28 +19,42 @@ type ActorMessage struct {
 	Payload any
 }
 
+type ActorResult struct {
+	Error error
+	Data  any
+}
+
 type ActorContext struct {
 	store TransactionStore
 }
 
 type ClientActor struct {
-	clientID  int
-	state     *ClientState
-	inbox     chan *ActorMessage
-	responses chan *TransactionResponse
+	clientID int
+	state    *ClientState
+	inbox    chan *ActorMessage
+	outbox   chan ActorResult
 }
 
 type ClientState struct {
-	balance     int
-	creditLimit int
+	totalCreditLimit int
+	balance          int
+	lastTransactions []Transaction
 }
 
-func NewClientActor(clientID, creditLimit int, responses chan *TransactionResponse) *ClientActor {
+func (s ClientState) LastTransactions() []Transaction {
+	return s.lastTransactions
+}
+
+func NewClientActor(clientID, totalCreditLimit int) *ClientActor {
 	actor := &ClientActor{
-		clientID:  clientID,
-		state:     &ClientState{0, creditLimit},
-		inbox:     make(chan *ActorMessage),
-		responses: responses,
+		clientID: clientID,
+		state: &ClientState{
+			totalCreditLimit: totalCreditLimit,
+			balance:          0,
+			lastTransactions: make([]Transaction, 0),
+		},
+		inbox:  make(chan *ActorMessage, 1000),
+		outbox: make(chan ActorResult),
 	}
 
 	return actor
@@ -49,62 +64,94 @@ func (a *ClientActor) Start(ctx *ActorContext) {
 	for msg := range a.inbox {
 		switch msg.Type {
 		case RefreshMessage:
-			log.Printf("refreshing actor state for actor id %d\n", a.clientID)
-			transactions, err := ctx.store.GetTransactionHistory(context.Background(), a.clientID)
-			if err != nil {
-				log.Println("error fetching transactions:", err)
+			a.outbox <- a.rebuildFromHistory(ctx)
+		case TransactionMessage:
+			req, ok := msg.Payload.(TransactionRequest)
+
+			if !ok {
+				a.outbox <- ActorResult{
+					Error: fmt.Errorf("invalid payload for actor message type %s", msg.Type),
+				}
 				continue
 			}
-			a.RebuildState(transactions)
-		case TransactionMessage:
-			// @TODO handle cast error
-			req := msg.Payload.(TransactionRequest)
-			a.responses <- a.processTransaction(ctx, req)
+			a.outbox <- a.processTransaction(ctx, req)
 		}
 	}
 }
 
-func (a *ClientActor) processTransaction(ctx *ActorContext, req TransactionRequest) *TransactionResponse {
+func (a *ClientActor) Send(msg *ActorMessage) ActorResult {
+	a.inbox <- msg
+	return <-a.outbox
+}
+
+func (a *ClientActor) CurrentState() ClientState {
+	return *a.state
+}
+
+func (a *ClientActor) rebuildFromHistory(ctx *ActorContext) ActorResult {
+	log.Printf("rebuilding actor state from history for client id %d\n", a.clientID)
+	transactions, err := ctx.store.GetTransactionHistory(context.Background(), a.clientID)
+	if err != nil {
+		return ActorResult{
+			Error: fmt.Errorf("error fetching transactions for client id %d: %w", a.clientID, err),
+		}
+	}
+	a.rebuildState(transactions)
+
+	return ActorResult{}
+}
+
+func (a *ClientActor) processTransaction(ctx *ActorContext, req TransactionRequest) ActorResult {
+	if req.Amount <= 0 {
+		return ActorResult{
+			Error: fmt.Errorf("o valor não pode ser menor que zero"),
+		}
+	}
+
 	switch req.Type {
 	case CreditTransaction:
 		a.state.balance += req.Amount
 	case DebitTransaction:
-		if a.state.balance-req.Amount < -a.state.creditLimit {
-			return &TransactionResponse{
-				CreditLimit: a.state.creditLimit,
-				Balance:     a.state.balance,
+		newBalance := a.state.balance - req.Amount
+		if newBalance < -a.state.totalCreditLimit {
+			return ActorResult{
+				Error: fmt.Errorf("sem limite para realizar a transacao"),
 			}
 		}
-		a.state.balance -= req.Amount
+		a.state.balance = newBalance
 	default:
-		log.Println("Invalid transaction type")
+		return ActorResult{
+			Error: fmt.Errorf("tipo de transacao invalida, opcoes disponiveis c => credito, d => debito"),
+		}
 	}
 
-	err := ctx.store.Add(context.Background(), Transaction{
+	transaction := Transaction{
 		ClientID:    a.clientID,
 		Amount:      req.Amount,
 		Type:        req.Type,
 		Description: req.Descricao,
 		Timestamp:   time.Now(),
-	})
-
-	//@TODO handle response proper (maybe use ctx??)
-	if err != nil {
-		log.Println("error adding transaction to store:", err)
 	}
 
-	return &TransactionResponse{
-		CreditLimit: a.state.creditLimit,
-		Balance:     a.state.balance,
+	// @TODO quando chegar no indice 10 precisamos ir ciclando o array pra manter somente as 10 ultimas transactions
+	// lembrar de usar rwmutex tanto aqui quando na alteração do saldo
+	a.state.lastTransactions = append(a.state.lastTransactions, transaction)
+
+	go func() {
+		if err := ctx.store.Add(context.Background(), transaction); err != nil {
+			log.Printf("error adding transaction to store for client id %d: %s", a.clientID, err.Error())
+		}
+	}()
+
+	return ActorResult{
+		Data: SuccessTransactionResponse{
+			CreditLimit: a.state.totalCreditLimit,
+			Balance:     a.state.balance,
+		},
 	}
 }
 
-func (a *ClientActor) Send(msg *ActorMessage) *TransactionResponse {
-	a.inbox <- msg
-	return <-a.responses
-}
-
-func (a *ClientActor) RebuildState(transactions []Transaction) {
+func (a *ClientActor) rebuildState(transactions []Transaction) {
 	a.state.balance = 0
 
 	for _, t := range transactions {

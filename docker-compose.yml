@@ -5,6 +5,7 @@ services:
     image: feralc/rinha-de-backend-2024:latest
     environment:
       GIN_MODE: release
+      APP_IN_MEMORY: true
     expose:
     - "8080"
     depends_on:
@@ -18,6 +19,7 @@ services:
     image: feralc/rinha-de-backend-2024:latest
     environment:
       GIN_MODE: release
+      APP_IN_MEMORY: true
     expose:
     - "8080"
     depends_on:

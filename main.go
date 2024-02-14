@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"os"
 	"strconv"
+	"time"
 
 	"github.com/feralc/rinha-backend-2024/app"
 	"github.com/gin-gonic/gin"
@@ -13,15 +15,8 @@ import (
 )
 
 func main() {
-
-	clientOptions := options.Client().ApplyURI("mongodb://db:27017")
-	client, err := mongo.Connect(context.Background(), clientOptions)
-	if err != nil {
-		panic(err)
-	}
-	defer client.Disconnect(context.Background())
-
-	store := app.NewMongoDBTransactionStore(client)
+	store, close := buildTransactionStore()
+	defer close()
 
 	clientManager := app.NewClientManager(store)
 
@@ -31,23 +26,28 @@ func main() {
 		clientIDStr := c.Param("id")
 		clientID, err := strconv.Atoi(clientIDStr)
 		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid client ID"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid client ID"})
 			return
 		}
 
 		var req app.TransactionRequest
 		if err := c.BindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid request body"})
+			c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 			return
 		}
 
 		actor := clientManager.Spawn(clientID, 100000)
-		response := actor.Send(&app.ActorMessage{
+		result := actor.Send(&app.ActorMessage{
 			Type:    app.TransactionMessage,
-			Payload: app.TransactionRequest{},
+			Payload: req,
 		})
 
-		c.JSON(http.StatusOK, response)
+		if result.Error != nil {
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": result.Error.Error()})
+			return
+		}
+
+		c.JSON(http.StatusOK, result.Data)
 	})
 
 	r.GET("/clientes/:id/extrato", func(c *gin.Context) {
@@ -58,19 +58,24 @@ func main() {
 			return
 		}
 
-		transactions, err := store.GetTransactionHistory(c.Request.Context(), clientID)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transaction history"})
-			return
-		}
+		actor := clientManager.Spawn(clientID, 100000)
+
+		transactions := actor.CurrentState().LastTransactions()
+
+		// transactions, err := store.GetTransactionHistory(c.Request.Context(), clientID)
+		// if err != nil {
+		// 	c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to fetch transaction history"})
+		// 	return
+		// }
 
 		//@TODO move this logic to better place
 		totalBalance := calculateTotalBalance(transactions)
 
-		response := app.TransactionResponse{
+		response := app.TransactionHistoryResponse{
 			CreditLimit:      100000,
-			Balance:          totalBalance,
+			Total:            totalBalance,
 			LastTransactions: transactions,
+			Date:             time.Now(),
 		}
 
 		c.JSON(http.StatusOK, response)
@@ -91,4 +96,18 @@ func calculateTotalBalance(transactions []app.Transaction) int {
 		}
 	}
 	return totalBalance
+}
+
+func buildTransactionStore() (store app.TransactionStore, close func()) {
+	if inMemory, _ := strconv.ParseBool(os.Getenv("APP_IN_MEMORY")); inMemory {
+		return app.NewInMemoryTransactionStore(), close
+	}
+
+	clientOptions := options.Client().ApplyURI("mongodb://db:27017")
+	client, err := mongo.Connect(context.Background(), clientOptions)
+	if err != nil {
+		panic(err)
+	}
+
+	return app.NewMongoDBTransactionStore(client), func() { client.Disconnect(context.Background()) }
 }

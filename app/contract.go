@@ -18,10 +18,16 @@ type TransactionRequest struct {
 	Descricao string          `json:"descricao"`
 }
 
-type TransactionResponse struct {
+type SuccessTransactionResponse struct {
+	CreditLimit int `json:"limite"`
+	Balance     int `json:"saldo"`
+}
+
+type TransactionHistoryResponse struct {
 	CreditLimit      int           `json:"limite"`
-	Balance          int           `json:"saldo"`
-	LastTransactions []Transaction `json:"ultimas_transacoes,omitempty"`
+	Total            int           `json:"total"`
+	LastTransactions []Transaction `json:"ultimas_transacoes"`
+	Date             time.Time     `json:"data_extrato"`
 }
 
 type Transaction struct {
