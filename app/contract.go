@@ -23,7 +23,7 @@ type SuccessTransactionResponse struct {
 	Balance     int `json:"saldo"`
 }
 
-type TransactionHistoryResponse struct {
+type TransactionHistory struct {
 	CreditLimit      int           `json:"limite"`
 	Total            int           `json:"total"`
 	LastTransactions []Transaction `json:"ultimas_transacoes"`

@@ -35,7 +35,8 @@ func (s *mongoDBTransactionStore) Add(ctx context.Context, transaction Transacti
 }
 
 func (s *mongoDBTransactionStore) GetTransactionHistory(ctx context.Context, clientID int) ([]Transaction, error) {
-	//@TODO handle errors
+	// @TODO implementar logica de snapshot para ler as ultimas transactions a partir de uma revision do snapshot
+	// @TODO handle errors
 	filter := bson.M{"client_id": clientID}
 	cursor, err := s.transactions.Find(ctx, filter)
 	if err != nil {

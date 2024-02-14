@@ -41,8 +41,13 @@ type ClientState struct {
 	lastTransactions []Transaction
 }
 
-func (s ClientState) LastTransactions() []Transaction {
-	return s.lastTransactions
+func (s ClientState) GetTransactionHistory() TransactionHistory {
+	return TransactionHistory{
+		CreditLimit:      s.totalCreditLimit,
+		Total:            s.balance,
+		LastTransactions: s.lastTransactions,
+		Date:             time.Now(),
+	}
 }
 
 func NewClientActor(clientID, totalCreditLimit int) *ClientActor {
@@ -135,7 +140,10 @@ func (a *ClientActor) processTransaction(ctx *ActorContext, req TransactionReque
 
 	// @TODO quando chegar no indice 10 precisamos ir ciclando o array pra manter somente as 10 ultimas transactions
 	// lembrar de usar rwmutex tanto aqui quando na alteração do saldo
+	// manter ordenação das ultimas para as primeiras
 	a.state.lastTransactions = append(a.state.lastTransactions, transaction)
+
+	// @TODO implementar logica de snapshot
 
 	go func() {
 		if err := ctx.store.Add(context.Background(), transaction); err != nil {
