@@ -4,20 +4,20 @@ import (
 	"sync"
 )
 
-type ClientManager struct {
+type ActorManager struct {
 	clients map[int]*ClientActor
 	mutex   sync.Mutex
 	store   TransactionStore
 }
 
-func NewClientManager(store TransactionStore) *ClientManager {
-	return &ClientManager{
+func NewActorManager(store TransactionStore) *ActorManager {
+	return &ActorManager{
 		clients: make(map[int]*ClientActor),
 		store:   store,
 	}
 }
 
-func (cm *ClientManager) Spawn(clientID, limit int) *ClientActor {
+func (cm *ActorManager) Spawn(clientID, limit int) *ClientActor {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 
