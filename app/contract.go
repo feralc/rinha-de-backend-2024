@@ -2,10 +2,19 @@ package app
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
+
+var NotFoundErr = fmt.Errorf("not found")
+
+type Client struct {
+	ID             int `bson:"client_id"`
+	CreditLimit    int `bson:"limit"`
+	InitialBalance int `bson:"initial_balance"`
+}
 
 type TransactionType string
 
@@ -58,4 +67,9 @@ type Snapshot struct {
 type TransactionStore interface {
 	Add(ctx context.Context, currentBalance int, transaction Transaction) error
 	GetTransactionHistory(ctx context.Context, clientID int) (lastSnapshot Snapshot, transactions []Transaction, err error)
+}
+
+type ClientStore interface {
+	Add(ctx context.Context, client Client) error
+	GetOne(ctx context.Context, clientId int) (client Client, err error)
 }

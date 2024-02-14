@@ -75,12 +75,12 @@ func (s ClientState) GetTransactionHistory() TransactionHistory {
 	}
 }
 
-func NewClientActor(clientID, totalCreditLimit int) *ClientActor {
+func NewClientActor(clientID, totalCreditLimit int, initialBalance int) *ClientActor {
 	actor := &ClientActor{
 		clientID: clientID,
 		state: &ClientState{
 			totalCreditLimit: totalCreditLimit,
-			balance:          0,
+			balance:          initialBalance,
 			lastTransactions: make([]Transaction, 0),
 			mu:               &sync.RWMutex{},
 		},

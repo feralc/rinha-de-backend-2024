@@ -22,7 +22,17 @@ func MakeTransactionsHandler(actorManager *ActorManager) func(c *gin.Context) {
 			return
 		}
 
-		actor := actorManager.Spawn(clientID, 100000)
+		actor, err := actorManager.Spawn(clientID)
+
+		if err != nil {
+			if err == NotFoundErr {
+				c.JSON(http.StatusNotFound, gin.H{"error": "client not found"})
+				return
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			return
+		}
+
 		result := actor.Send(&ActorMessage{
 			Type:    TransactionMessage,
 			Payload: req,
@@ -46,8 +56,16 @@ func MakeTransactionHistoryHandler(actorManager *ActorManager) func(c *gin.Conte
 			return
 		}
 
-		// @TODO consultar client no banco de dados para ler o limite
-		actor := actorManager.Spawn(clientID, 100000)
+		actor, err := actorManager.Spawn(clientID)
+
+		if err != nil {
+			if err == NotFoundErr {
+				c.JSON(http.StatusNotFound, gin.H{"error": "client not found"})
+				return
+			}
+			c.JSON(http.StatusUnprocessableEntity, gin.H{"error": err.Error()})
+			return
+		}
 
 		history := actor.CurrentState().GetTransactionHistory()
 
