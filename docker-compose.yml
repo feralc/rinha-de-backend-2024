@@ -1,0 +1,54 @@
+version: "3.8"
+
+services:
+  web01:
+    image: feralc/rinha-de-backend-2024:latest
+    environment:
+      GIN_MODE: release
+    expose:
+    - "8080"
+    depends_on:
+    - db
+    deploy:
+      resources:
+        limits:
+          cpus: "0.27"
+          memory: "60MB"
+  web02:
+    image: feralc/rinha-de-backend-2024:latest
+    environment:
+      GIN_MODE: release
+    expose:
+    - "8080"
+    depends_on:
+    - db
+    deploy:
+      resources:
+        limits:
+          cpus: "0.27"
+          memory: "60MB"
+
+  haproxy:
+    image: haproxy:2.9.4
+    volumes:
+      - ./haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro
+    ports:
+      - "9090:9090"
+    depends_on:
+    - web01
+    - web02
+    deploy:
+      resources:
+        limits:
+          cpus: "0.39"
+          memory: "60MB"
+
+  db:
+    image: mongo:7.0.5
+    expose:
+    - "27017"
+    deploy:
+      resources:
+        limits:
+          cpus: "0.57"
+          memory: "370MB"
