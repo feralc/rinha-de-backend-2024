@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 var apiAddresses = []string{
@@ -16,7 +17,11 @@ var apiAddresses = []string{
 }
 
 func main() {
-	proxy := &httputil.ReverseProxy{Director: director}
+	proxy := &httputil.ReverseProxy{Director: director, Transport: &http.Transport{
+		MaxIdleConns:        100,
+		MaxIdleConnsPerHost: 10,
+		IdleConnTimeout:     90 * time.Second,
+	}}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		proxy.ServeHTTP(w, r)
