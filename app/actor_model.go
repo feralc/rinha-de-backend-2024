@@ -3,18 +3,14 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
-	"sort"
-	"sync"
-	"time"
 )
 
-type MessageType string
+type MessageType rune
 
 const (
-	RefreshMessage     MessageType = "Refresh"
-	TransactionMessage MessageType = "Transaction"
-	HistorySize                    = 10
+	RefreshMessage      MessageType = 'R'
+	TransactionMessage  MessageType = 'T'
+	QueryHistoryMessage MessageType = 'Q'
 )
 
 type ActorMessage struct {
@@ -32,191 +28,80 @@ type ActorContext struct {
 }
 
 type ClientActor struct {
-	clientID int
-	state    *ClientState
-	inbox    chan *ActorMessage
-	outbox   chan ActorResult
+	client *Client
+	inbox  chan ActorMessage
+	outbox chan ActorResult
 }
 
-type ClientState struct {
-	totalCreditLimit        int
-	balance                 int
-	lastTransactions        []Transaction
-	lastTransactionRevision int
-	mu                      *sync.RWMutex
-}
-
-func (s ClientState) GetTransactionHistory() TransactionHistory {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	lastTransactions := make([]Transaction, len(s.lastTransactions))
-	copy(lastTransactions, s.lastTransactions)
-
-	sort.Slice(lastTransactions, func(i, j int) bool {
-		return lastTransactions[i].Timestamp.After(lastTransactions[j].Timestamp)
-	})
-
-	transactionsResponse := make([]TransactionResponse, len(s.lastTransactions))
-	for i, t := range lastTransactions {
-		transactionsResponse[i] = TransactionResponse{
-			Amount:      t.Amount,
-			Type:        t.Type,
-			Description: t.Description,
-			Timestamp:   t.Timestamp,
-		}
-	}
-
-	return TransactionHistory{
-		Balance: TransactionHistoryBalance{
-			CreditLimit: s.totalCreditLimit,
-			Total:       s.balance,
-			Date:        time.Now(),
-		},
-		LastTransactions: transactionsResponse,
-	}
-}
-
-func NewClientActor(clientID, totalCreditLimit int, initialBalance int) *ClientActor {
+func NewClientActor(client *Client) *ClientActor {
 	actor := &ClientActor{
-		clientID: clientID,
-		state: &ClientState{
-			totalCreditLimit: totalCreditLimit,
-			balance:          initialBalance,
-			lastTransactions: make([]Transaction, 0),
-			mu:               &sync.RWMutex{},
-		},
-		inbox:  make(chan *ActorMessage, 1000),
+		client: client,
+		inbox:  make(chan ActorMessage),
 		outbox: make(chan ActorResult),
 	}
 
 	return actor
 }
 
-func (a *ClientActor) Start(ctx *ActorContext) {
-	for msg := range a.inbox {
-		switch msg.Type {
-		case RefreshMessage:
-			a.outbox <- a.rebuildFromHistory(ctx)
-		case TransactionMessage:
-			req, ok := msg.Payload.(TransactionRequest)
-
-			if !ok {
-				a.outbox <- ActorResult{
-					Error: fmt.Errorf("invalid payload for actor message type %s", msg.Type),
-				}
-				continue
-			}
-			a.outbox <- a.processTransaction(ctx, req)
-		}
-	}
-}
-
-func (a *ClientActor) Send(msg *ActorMessage) ActorResult {
+func (a *ClientActor) Send(msg ActorMessage) ActorResult {
 	a.inbox <- msg
 	return <-a.outbox
 }
 
-func (a *ClientActor) CurrentState() ClientState {
-	return *a.state
-}
-
-func (a *ClientActor) rebuildFromHistory(ctx *ActorContext) ActorResult {
-	log.Printf("rebuilding actor state from history for client id %d\n", a.clientID)
-	currentBalance, transactions, err := ctx.store.GetTransactionHistory(context.Background(), a.clientID)
-	if err != nil {
-		return ActorResult{
-			Error: fmt.Errorf("error fetching transactions for client id %d: %w", a.clientID, err),
+func (a *ClientActor) Start(ctx *ActorContext) {
+	for msg := range a.inbox {
+		switch msg.Type {
+		case RefreshMessage:
+			a.outbox <- a.handleRefreshMessage(ctx)
+		case TransactionMessage:
+			a.outbox <- a.handleTransactionMessage(ctx, msg)
+		case QueryHistoryMessage:
+			a.outbox <- ActorResult{
+				Data: a.client.GetTransactionHistory(),
+			}
 		}
 	}
-	a.rebuildState(currentBalance, transactions)
+}
+
+func (a *ClientActor) handleRefreshMessage(ctx *ActorContext) ActorResult {
+	snapshot, transactions, err := ctx.store.GetTransactionHistory(context.Background(), a.client.ID)
+	if err != nil {
+		return ActorResult{
+			Error: fmt.Errorf("error fetching transactions for client id %d: %w", a.client.ID, err),
+		}
+	}
+
+	a.client.RebuildStateFromHistory(snapshot, transactions)
 
 	return ActorResult{}
 }
 
-func (a *ClientActor) processTransaction(ctx *ActorContext, req TransactionRequest) ActorResult {
-	a.state.mu.Lock()
-	defer a.state.mu.Unlock()
-
-	if req.Amount <= 0 {
+func (a *ClientActor) handleTransactionMessage(ctx *ActorContext, msg ActorMessage) ActorResult {
+	req, ok := msg.Payload.(TransactionRequest)
+	if !ok {
 		return ActorResult{
-			Error: fmt.Errorf("o valor não pode ser menor que zero"),
+			Error: fmt.Errorf("invalid payload for actor message type %c", msg.Type),
 		}
 	}
 
-	switch req.Type {
-	case CreditTransaction:
-		a.state.balance += req.Amount
-	case DebitTransaction:
-		newBalance := a.state.balance - req.Amount
-		if newBalance < -a.state.totalCreditLimit {
-			return ActorResult{
-				Error: fmt.Errorf("sem limite para realizar a transacao"),
-			}
-		}
-		a.state.balance = newBalance
-	default:
+	transaction, err := a.client.ProcessTransaction(req)
+
+	if err != nil {
 		return ActorResult{
-			Error: fmt.Errorf("tipo de transacao invalida, opcoes disponiveis c => credito, d => debito"),
+			Error: err,
 		}
 	}
 
-	a.state.lastTransactionRevision++
-
-	transaction := Transaction{
-		ClientID:    a.clientID,
-		Amount:      req.Amount,
-		Type:        req.Type,
-		Description: req.Descricao,
-		Timestamp:   time.Now(),
-		Revision:    a.state.lastTransactionRevision,
-	}
-
-	a.state.lastTransactions = append(a.state.lastTransactions, transaction)
-
-	if len(a.state.lastTransactions) > HistorySize {
-		a.state.lastTransactions = a.state.lastTransactions[1:]
-	}
-
-	go func() {
-		if err := ctx.store.Add(context.Background(), a.state.balance, transaction); err != nil {
-			log.Printf("error adding transaction to store for client id %d: %s", a.clientID, err.Error())
+	if err := ctx.store.Add(context.Background(), a.client.Balance, transaction); err != nil {
+		return ActorResult{
+			Error: fmt.Errorf("error adding transaction to store for client id %d: %s", a.client.ID, err.Error()),
 		}
-	}()
+	}
 
 	return ActorResult{
-		Data: SuccessTransactionResponse{
-			CreditLimit: a.state.totalCreditLimit,
-			Balance:     a.state.balance,
+		Data: SuccessTransactionResult{
+			CreditLimit: a.client.CreditLimit,
+			Balance:     a.client.Balance,
 		},
 	}
-}
-
-func (a *ClientActor) rebuildState(lastSnapshot Snapshot, transactions []Transaction) {
-	a.state.mu.Lock()
-	defer a.state.mu.Unlock()
-
-	a.state.balance = lastSnapshot.Balance
-	a.state.lastTransactionRevision = lastSnapshot.Revision
-
-	lastTenTransactions := make([]Transaction, 0, 10)
-
-	for _, t := range transactions {
-		if t.Revision > a.state.lastTransactionRevision {
-			if t.Type == CreditTransaction {
-				a.state.balance += t.Amount
-			} else if t.Type == DebitTransaction {
-				a.state.balance -= t.Amount
-			}
-
-			a.state.lastTransactionRevision = t.Revision
-		}
-
-		lastTenTransactions = append(lastTenTransactions, t)
-		if len(lastTenTransactions) > HistorySize {
-			lastTenTransactions = lastTenTransactions[1:]
-		}
-	}
-
-	a.state.lastTransactions = lastTenTransactions
 }

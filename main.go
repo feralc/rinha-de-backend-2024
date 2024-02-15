@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
 
 	"github.com/feralc/rinha-backend-2024/app"
 	"github.com/gin-gonic/gin"
@@ -15,7 +16,7 @@ import (
 func main() {
 	ctx := context.Background()
 
-	clientOptions := options.Client().ApplyURI("mongodb://db:27017")
+	clientOptions := options.Client().ApplyURI("mongodb://127.0.0.1:27017")
 	mongoClient, err := mongo.Connect(ctx, clientOptions)
 
 	if err != nil {
@@ -50,11 +51,11 @@ func main() {
 	clientsStore := app.NewMongoDBClientStore(mongoClient)
 
 	initialClients := []app.Client{
-		{ID: 1, CreditLimit: 100000, InitialBalance: 0},
-		{ID: 2, CreditLimit: 80000, InitialBalance: 0},
-		{ID: 3, CreditLimit: 1000000, InitialBalance: 0},
-		{ID: 4, CreditLimit: 10000000, InitialBalance: 0},
-		{ID: 5, CreditLimit: 500000, InitialBalance: 0},
+		{ID: 1, CreditLimit: 100000, Balance: 0},
+		{ID: 2, CreditLimit: 80000, Balance: 0},
+		{ID: 3, CreditLimit: 1000000, Balance: 0},
+		{ID: 4, CreditLimit: 10000000, Balance: 0},
+		{ID: 5, CreditLimit: 500000, Balance: 0},
 	}
 
 	for _, c := range initialClients {
@@ -73,8 +74,10 @@ func main() {
 	r.POST("/clientes/:id/transacoes", app.MakeTransactionsHandler(actorManager))
 	r.GET("/clientes/:id/extrato", app.MakeTransactionHistoryHandler(actorManager))
 
-	log.Println("server listening on :8080")
-	if err := r.Run(":8080"); err != nil {
+	port := os.Getenv("APP_PORT")
+
+	log.Printf("server listening on :%s\n", port)
+	if err := r.Run(fmt.Sprintf(":%s", port)); err != nil {
 		fmt.Printf("failed to start server: %v\n", err)
 	}
 }

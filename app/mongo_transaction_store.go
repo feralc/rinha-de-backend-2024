@@ -78,7 +78,7 @@ func (s *mongoDBTransactionStore) GetTransactionHistory(ctx context.Context, cli
 
 func (s *mongoDBTransactionStore) getLastSnapshot(ctx context.Context) (lastSnapshot Snapshot, err error) {
 	var snapshot Snapshot
-	opts := options.FindOne().SetSort(bson.D{{"created_at", -1}})
+	opts := options.FindOne().SetSort(bson.D{{Key: "created_at", Value: -1}})
 	err = s.snapshots.FindOne(ctx, bson.D{}, opts).Decode(&snapshot)
 	if err != nil {
 		if errors.Is(err, mongo.ErrNoDocuments) {

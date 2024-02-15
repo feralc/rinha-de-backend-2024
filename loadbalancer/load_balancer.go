@@ -6,29 +6,42 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 )
 
 var apiAddresses = []string{
-	"http://web01:8080",
-	"http://web02:8080",
+	"http://127.0.0.1:8080",
+	"http://127.0.0.1:8081",
 }
 
 func main() {
+	maxConnsPerHost, _ := strconv.Atoi(os.Getenv("APP_MAX_CONNS_PER_HOST"))
+	maxIdleConns, _ := strconv.Atoi(os.Getenv("APP_MAX_IDLE_CONNS"))
+	maxIdleConnsPerHost, _ := strconv.Atoi(os.Getenv("APP_MAX_IDLE_CONNS_PER_HOST"))
+	idleConnTimeout, _ := strconv.Atoi(os.Getenv("APP_IDLE_CONN_TIMEOUT_SECONDS"))
+	port, _ := strconv.Atoi(os.Getenv("APP_PORT"))
+
+	fmt.Printf("APP_MAX_CONNS_PER_HOST=%d\n", maxConnsPerHost)
+	fmt.Printf("APP_MAX_IDLE_CONNS=%d\n", maxIdleConns)
+	fmt.Printf("APP_MAX_IDLE_CONNS_PER_HOST=%d\n", maxIdleConnsPerHost)
+	fmt.Printf("APP_IDLE_CONN_TIMEOUT_SECONDS=%d\n", idleConnTimeout)
+
 	proxy := &httputil.ReverseProxy{Director: director, Transport: &http.Transport{
-		MaxIdleConns:        100,
-		MaxIdleConnsPerHost: 10,
-		IdleConnTimeout:     90 * time.Second,
+		MaxIdleConns:        maxIdleConns,
+		MaxIdleConnsPerHost: maxIdleConnsPerHost,
+		IdleConnTimeout:     time.Duration(idleConnTimeout) * time.Second,
+		MaxConnsPerHost:     maxConnsPerHost,
 	}}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		proxy.ServeHTTP(w, r)
 	})
 
-	fmt.Println("Load balancer listening on port 9999...")
-	log.Fatal(http.ListenAndServe(":9999", nil))
+	fmt.Printf("Load balancer listening on port %d...\n", port)
+	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
 func director(req *http.Request) {

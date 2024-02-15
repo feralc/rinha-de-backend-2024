@@ -27,7 +27,7 @@ func NewMongoDBClientStore(client *mongo.Client) ClientStore {
 }
 
 func (s *mongoDBClientStore) Add(ctx context.Context, client Client) error {
-	filter := bson.M{"ID": client.ID}
+	filter := bson.M{"client_id": client.ID}
 	count, err := s.clients.CountDocuments(ctx, filter)
 	if err != nil {
 		return err
@@ -47,7 +47,7 @@ func (s *mongoDBClientStore) GetOne(ctx context.Context, clientID int) (client C
 	err = s.clients.FindOne(ctx, filter).Decode(&client)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return client, NotFoundErr
+			return client, ErrNotFound
 		}
 
 		return client, err
