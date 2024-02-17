@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strconv"
 
 	"github.com/feralc/rinha-backend-2024/app"
 	"github.com/gin-gonic/gin"
@@ -27,8 +28,11 @@ func main() {
 
 	db := mongoClient.Database(app.DatabaseName)
 
-	if err := db.Drop(ctx); err != nil {
-		panic(err)
+	if shouldDropDB, _ := strconv.ParseBool(os.Getenv("DROP_DB_ON_START")); shouldDropDB {
+		log.Printf("dropping database %s\n", app.DatabaseName)
+		if err := db.Drop(ctx); err != nil {
+			panic(err)
+		}
 	}
 
 	db.Collection(app.TransactionsCollectionName).Indexes().CreateMany(ctx, []mongo.IndexModel{
@@ -42,9 +46,15 @@ func main() {
 		},
 	})
 
-	db.Collection(app.SnapshotsCollectionName).Indexes().CreateOne(ctx, mongo.IndexModel{
-		Keys:    bson.M{"created_at": 1},
-		Options: options.Index(),
+	db.Collection(app.SnapshotsCollectionName).Indexes().CreateMany(ctx, []mongo.IndexModel{
+		{
+			Keys:    bson.M{"created_at": 1},
+			Options: options.Index(),
+		},
+		{
+			Keys:    bson.M{"client_id": 1},
+			Options: options.Index(),
+		},
 	})
 
 	transactionStore := app.NewMongoDBTransactionStore(mongoClient)

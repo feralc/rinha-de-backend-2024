@@ -12,6 +12,7 @@ var ErrNotFound = fmt.Errorf("not found")
 
 type Snapshot struct {
 	ID        primitive.ObjectID `bson:"_id,omitempty"`
+	ClientID  int                `bson:"client_id"`
 	Revision  int                `bson:"revision"`
 	Balance   int                `bson:"balance"`
 	CreatedAt time.Time          `bson:"created_at"`
