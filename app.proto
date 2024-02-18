@@ -1,0 +1,49 @@
+syntax = "proto3";
+
+package app;
+
+option go_package = "proto/";
+
+message TransactionRequest {
+  uint32 ClientID = 1;
+  uint32 Amount = 2;
+  TransactionType Type = 3;
+  string Description = 4;
+}
+
+message HistoryRequest {
+  uint32 ClientID = 1;
+}
+
+enum TransactionType {
+  CREDIT_TRANSACTION = 0;
+  DEBIT_TRANSACTION = 1;
+}
+
+message TransactionResult {
+  uint32 CreditLimit = 1;
+  uint32 Balance = 2;
+}
+
+message Balance {
+  uint32 CreditLimit = 1;
+  uint32 Total = 2;
+  int64 Date = 3;
+}
+
+message Transaction {
+  uint32 Amount = 1;
+  string Type = 2;
+  string Description = 3;
+  int64 Timestamp = 4;
+}
+
+message AccountStatement {
+  Balance Balance = 1;
+  repeated Transaction LastTransactions = 2;
+}
+
+service TransactionService {
+  rpc DoTransaction(TransactionRequest) returns (TransactionResult);
+  rpc GetHistory(HistoryRequest) returns (AccountStatement);
+}

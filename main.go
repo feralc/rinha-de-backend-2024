@@ -3,14 +3,16 @@ package main
 import (
 	"context"
 	"log"
-	"net/http"
+	"net"
 	"os"
 	"strconv"
 
 	"github.com/feralc/rinha-backend-2024/app"
+	"github.com/feralc/rinha-backend-2024/proto"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
+	"google.golang.org/grpc"
 )
 
 func main() {
@@ -28,13 +30,18 @@ func main() {
 
 	actorManager := app.NewActorManager(clientsStore, transactionStore)
 
-	port := os.Getenv("APP_PORT")
-	http.HandleFunc("/clientes/{id}/transacoes", app.MakeTransactionsHandler(actorManager))
-	http.HandleFunc("/clientes/{id}/extrato", app.MakeTransactionHistoryHandler(actorManager))
+	grpcServer := grpc.NewServer()
 
-	log.Printf("server listening on :%s\n", port)
-	if err := http.ListenAndServe(":"+port, nil); err != nil {
-		log.Fatalf("failed to start server: %v\n", err)
+	proto.RegisterTransactionServiceServer(grpcServer, app.NewTransactionService(actorManager))
+
+	port := os.Getenv("APP_PORT")
+	lis, err := net.Listen("tcp", ":"+port)
+	if err != nil {
+		log.Fatalf("failed to listen: %v", err)
+	}
+	log.Printf("gRPC server listening on :%s\n", port)
+	if err := grpcServer.Serve(lis); err != nil {
+		log.Fatalf("failed to serve: %v", err)
 	}
 }
 

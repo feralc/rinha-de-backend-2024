@@ -13,10 +13,9 @@ const (
 )
 
 type TransactionRequest struct {
-	HttpRequest
-	Amount    int             `json:"valor" binding:"required"`
-	Type      TransactionType `json:"tipo"`
-	Descricao string          `json:"descricao" binding:"required,min=1,max=10"`
+	Amount      int             `json:"valor" binding:"required"`
+	Type        TransactionType `json:"tipo"`
+	Description string          `json:"descricao" binding:"required,min=1,max=10"`
 }
 
 func (r TransactionRequest) Validate() error {
@@ -28,7 +27,7 @@ func (r TransactionRequest) Validate() error {
 		return fmt.Errorf("tipo de transacao invalida")
 	}
 
-	if r.Descricao == "" || len(r.Descricao) > 10 {
+	if r.Description == "" || len(r.Description) > 10 {
 		return fmt.Errorf("descricao deve ter entre 1 e 10 caracteres")
 	}
 

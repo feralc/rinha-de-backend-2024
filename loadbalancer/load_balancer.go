@@ -1,86 +1,163 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
-	"net/http/httputil"
-	"net/url"
 	"os"
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/feralc/rinha-backend-2024/app"
+	"github.com/feralc/rinha-backend-2024/proto"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/credentials/insecure"
+	"google.golang.org/grpc/status"
 )
 
 var (
-	targetBackends []*url.URL
-	proxy          *httputil.ReverseProxy
+	targetBackends []proto.TransactionServiceClient
 )
 
 func main() {
-	backends := strings.Split(os.Getenv("APP_BACKENDS"), ",")
-	targetBackends = make([]*url.URL, len(backends))
-
-	for i, address := range backends {
-		parsed, err := url.Parse(address)
-		if err != nil {
-			panic(err)
-		}
-		targetBackends[i] = parsed
-	}
-
-	maxConnsPerHost, _ := strconv.Atoi(os.Getenv("APP_MAX_CONNS_PER_HOST"))
-	maxIdleConns, _ := strconv.Atoi(os.Getenv("APP_MAX_IDLE_CONNS"))
-	maxIdleConnsPerHost, _ := strconv.Atoi(os.Getenv("APP_MAX_IDLE_CONNS_PER_HOST"))
-	idleConnTimeout, _ := strconv.Atoi(os.Getenv("APP_IDLE_CONN_TIMEOUT_SECONDS"))
+	addresses := strings.Split(os.Getenv("APP_BACKENDS"), ",")
 	port, _ := strconv.Atoi(os.Getenv("APP_PORT"))
 
-	fmt.Printf("APP_MAX_CONNS_PER_HOST=%d\n", maxConnsPerHost)
-	fmt.Printf("APP_MAX_IDLE_CONNS=%d\n", maxIdleConns)
-	fmt.Printf("APP_MAX_IDLE_CONNS_PER_HOST=%d\n", maxIdleConnsPerHost)
-	fmt.Printf("APP_IDLE_CONN_TIMEOUT_SECONDS=%d\n", idleConnTimeout)
+	defer connectBackends(addresses)()
 
-	initProxy(maxIdleConns, maxIdleConnsPerHost, idleConnTimeout, maxConnsPerHost)
+	http.HandleFunc("/clientes/{id}/transacoes", loadBalance(handleTransaction))
+	http.HandleFunc("/clientes/{id}/extrato", loadBalance(handleHistory))
 
-	http.HandleFunc("/", handleRequest)
-
-	fmt.Printf("Load balancer listening on port %d...\n", port)
+	fmt.Printf("load balancer listening on port %d...\n", port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
-func initProxy(maxIdleConns, maxIdleConnsPerHost, idleConnTimeout, maxConnsPerHost int) {
-	proxy = &httputil.ReverseProxy{
-		Director: director,
-		Transport: &http.Transport{
-			MaxIdleConns:        maxIdleConns,
-			MaxIdleConnsPerHost: maxIdleConnsPerHost,
-			IdleConnTimeout:     time.Duration(idleConnTimeout) * time.Second,
-			MaxConnsPerHost:     maxConnsPerHost,
-			DisableKeepAlives:   false,
-		},
+func connectBackends(addresses []string) func() {
+	targetBackends = make([]proto.TransactionServiceClient, len(addresses))
+	conns := make([]*grpc.ClientConn, len(addresses))
+
+	for i, address := range addresses {
+		conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		if err != nil {
+			log.Fatalf("failed to connect to gRPC backend: %v", err)
+		}
+
+		conns[i] = conn
+		grpcClient := proto.NewTransactionServiceClient(conn)
+		targetBackends[i] = grpcClient
+	}
+
+	return func() {
+		for _, c := range conns {
+			c.Close()
+		}
 	}
 }
 
-func handleRequest(w http.ResponseWriter, r *http.Request) {
-	proxy.ServeHTTP(w, r)
-}
+func loadBalance(handler func(clientID int, backend proto.TransactionServiceClient) func(w http.ResponseWriter, r *http.Request)) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		clientIDStr := r.PathValue("id")
+		clientID, err := strconv.Atoi(clientIDStr)
+		if err != nil {
+			http.Error(w, "invalid client id", http.StatusUnprocessableEntity)
+			return
+		}
 
-func director(req *http.Request) {
-	clientID := getClientID(req.URL.Path)
+		targetIndex := clientID % len(targetBackends)
+		targetBackend := targetBackends[targetIndex]
 
-	targetIndex := clientID % len(targetBackends)
-	targetURL := targetBackends[targetIndex]
-
-	req.URL.Scheme = targetURL.Scheme
-	req.URL.Host = targetURL.Host
-}
-
-func getClientID(path string) int {
-	parts := strings.Split(path, "/")
-	clientIDStr := parts[2]
-	clientID, err := strconv.Atoi(clientIDStr)
-	if err != nil {
-		return 0
+		handler(clientID, targetBackend)(w, r)
 	}
-	return clientID
+}
+
+func handleTransaction(clientID int, backend proto.TransactionServiceClient) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req app.TransactionRequest
+
+		if r.Method == http.MethodPost {
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				http.Error(w, "invalid request body", http.StatusUnprocessableEntity)
+				return
+			}
+
+			if err := req.Validate(); err != nil {
+				http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+				return
+			}
+		}
+
+		var txType proto.TransactionType
+
+		switch req.Type {
+		case app.CreditTransaction:
+			txType = proto.TransactionType_CREDIT_TRANSACTION
+		case app.DebitTransaction:
+			txType = proto.TransactionType_DEBIT_TRANSACTION
+		}
+
+		result, err := backend.DoTransaction(context.Background(), &proto.TransactionRequest{
+			ClientID:    int32(clientID),
+			Amount:      int32(req.Amount),
+			Type:        txType,
+			Description: req.Description,
+		})
+
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				http.Error(w, "client not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(app.SuccessTransactionResult{
+			CreditLimit: int(result.CreditLimit),
+			Balance:     int(result.Balance),
+		})
+	}
+}
+
+func handleHistory(clientID int, backend proto.TransactionServiceClient) func(w http.ResponseWriter, r *http.Request) {
+	return func(w http.ResponseWriter, r *http.Request) {
+		result, err := backend.GetHistory(context.Background(), &proto.HistoryRequest{
+			ClientID: int32(clientID),
+		})
+
+		if err != nil {
+			if status.Code(err) == codes.NotFound {
+				http.Error(w, "client not found", http.StatusNotFound)
+				return
+			}
+
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
+
+		lastTransactions := make([]app.TransactionSummary, len(result.LastTransactions))
+
+		for i, t := range result.LastTransactions {
+			lastTransactions[i] = app.TransactionSummary{
+				Amount:      int(t.Amount),
+				Type:        app.TransactionType(t.Type),
+				Description: t.Description,
+				Timestamp:   time.Unix(t.Timestamp, 0),
+			}
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(app.TransactionHistory{
+			Balance: app.TransactionHistoryBalance{
+				CreditLimit: int(result.Balance.CreditLimit),
+				Total:       int(result.Balance.Total),
+				Date:        time.Unix(result.Balance.Date, 0),
+			},
+			LastTransactions: lastTransactions,
+		})
+	}
 }

@@ -39,7 +39,7 @@ func (c *Client) ProcessTransaction(req TransactionRequest) (result Transaction,
 		ClientID:    c.ID,
 		Amount:      req.Amount,
 		Type:        req.Type,
-		Description: req.Descricao,
+		Description: req.Description,
 		Timestamp:   time.Now(),
 		Revision:    c.lastTransactionRevision,
 	}
