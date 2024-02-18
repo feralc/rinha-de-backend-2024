@@ -41,7 +41,7 @@ func connectBackends(addresses []string) func() {
 	conns := make([]*grpc.ClientConn, len(addresses))
 
 	for i, address := range addresses {
-		conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()))
+		conn, err := grpc.Dial(address, grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithIdleTimeout(0))
 		if err != nil {
 			log.Fatalf("failed to connect to gRPC backend: %v", err)
 		}

@@ -48,7 +48,7 @@ func main() {
 func setupMongoDB(ctx context.Context) *mongo.Client {
 	clientOptions := options.Client().
 		ApplyURI("mongodb://127.0.0.1:27017").
-		SetMinPoolSize(100).
+		SetMinPoolSize(25).
 		SetMaxPoolSize(100)
 
 	mongoClient, err := mongo.Connect(ctx, clientOptions)
