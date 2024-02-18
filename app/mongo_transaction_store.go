@@ -15,7 +15,7 @@ const (
 	DatabaseName               = "rinha_backend"
 	TransactionsCollectionName = "transactions"
 	SnapshotsCollectionName    = "snapshots"
-	SnapshotSize               = 50
+	SnapshotSize               = 100
 )
 
 type mongoDBTransactionStore struct {

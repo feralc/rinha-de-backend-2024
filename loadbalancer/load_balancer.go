@@ -12,12 +12,23 @@ import (
 	"time"
 )
 
-var apiAddresses = []string{
-	"http://127.0.0.1:8080",
-	"http://127.0.0.1:8081",
-}
+var (
+	targetBackends []*url.URL
+	proxy          *httputil.ReverseProxy
+)
 
 func main() {
+	backends := strings.Split(os.Getenv("APP_BACKENDS"), ",")
+	targetBackends = make([]*url.URL, len(backends))
+
+	for i, address := range backends {
+		parsed, err := url.Parse(address)
+		if err != nil {
+			panic(err)
+		}
+		targetBackends[i] = parsed
+	}
+
 	maxConnsPerHost, _ := strconv.Atoi(os.Getenv("APP_MAX_CONNS_PER_HOST"))
 	maxIdleConns, _ := strconv.Atoi(os.Getenv("APP_MAX_IDLE_CONNS"))
 	maxIdleConnsPerHost, _ := strconv.Atoi(os.Getenv("APP_MAX_IDLE_CONNS_PER_HOST"))
@@ -29,26 +40,37 @@ func main() {
 	fmt.Printf("APP_MAX_IDLE_CONNS_PER_HOST=%d\n", maxIdleConnsPerHost)
 	fmt.Printf("APP_IDLE_CONN_TIMEOUT_SECONDS=%d\n", idleConnTimeout)
 
-	proxy := &httputil.ReverseProxy{Director: director, Transport: &http.Transport{
-		MaxIdleConns:        maxIdleConns,
-		MaxIdleConnsPerHost: maxIdleConnsPerHost,
-		IdleConnTimeout:     time.Duration(idleConnTimeout) * time.Second,
-		MaxConnsPerHost:     maxConnsPerHost,
-	}}
+	initProxy(maxIdleConns, maxIdleConnsPerHost, idleConnTimeout, maxConnsPerHost)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		proxy.ServeHTTP(w, r)
-	})
+	http.HandleFunc("/", handleRequest)
 
 	fmt.Printf("Load balancer listening on port %d...\n", port)
 	log.Fatal(http.ListenAndServe(fmt.Sprintf(":%d", port), nil))
 }
 
+func initProxy(maxIdleConns, maxIdleConnsPerHost, idleConnTimeout, maxConnsPerHost int) {
+	proxy = &httputil.ReverseProxy{
+		Director: director,
+		Transport: &http.Transport{
+			MaxIdleConns:        maxIdleConns,
+			MaxIdleConnsPerHost: maxIdleConnsPerHost,
+			IdleConnTimeout:     time.Duration(idleConnTimeout) * time.Second,
+			MaxConnsPerHost:     maxConnsPerHost,
+			DisableKeepAlives:   false,
+		},
+	}
+}
+
+func handleRequest(w http.ResponseWriter, r *http.Request) {
+	proxy.ServeHTTP(w, r)
+}
+
 func director(req *http.Request) {
 	clientID := getClientID(req.URL.Path)
 
-	targetIndex := clientID % len(apiAddresses)
-	targetURL, _ := url.Parse(apiAddresses[targetIndex])
+	targetIndex := clientID % len(targetBackends)
+	targetURL := targetBackends[targetIndex]
+
 	req.URL.Scheme = targetURL.Scheme
 	req.URL.Host = targetURL.Host
 }
