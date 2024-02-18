@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"log"
 )
 
 type MessageType rune
@@ -92,11 +93,11 @@ func (a *ClientActor) handleTransactionMessage(ctx *ActorContext, msg ActorMessa
 		}
 	}
 
-	if err := ctx.store.Add(context.Background(), a.client.Balance, transaction); err != nil {
-		return ActorResult{
-			Error: fmt.Errorf("error adding transaction to store for client id %d: %s", a.client.ID, err.Error()),
+	go func() {
+		if err := ctx.store.Add(context.Background(), a.client.Balance, transaction); err != nil {
+			log.Println(fmt.Errorf("error adding transaction to store for client id %d: %s", a.client.ID, err.Error()))
 		}
-	}
+	}()
 
 	return ActorResult{
 		Data: SuccessTransactionResult{
